@@ -4,6 +4,7 @@ import os
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 
 
 SERVICE_ROUTES = {
@@ -20,6 +21,21 @@ app = FastAPI(
     title="PeakPick API Gateway",
     version="0.1.0",
     description="Single entry point for PeakPick demo clients.",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173",
+        ).split(",")
+        if origin.strip()
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -72,4 +88,3 @@ async def proxy(service: str, path: str, request: Request) -> Response:
         status_code=response.status_code,
         media_type=response.headers.get("content-type"),
     )
-
