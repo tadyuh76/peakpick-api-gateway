@@ -75,13 +75,19 @@ async def proxy(service: str, path: str, request: Request) -> Response:
     body = await request.body()
 
     async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.request(
-            method=request.method,
-            url=target_url,
-            params=request.query_params,
-            content=body,
-            headers=headers,
-        )
+        try:
+            response = await client.request(
+                method=request.method,
+                url=target_url,
+                params=request.query_params,
+                content=body,
+                headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"{service} service is unavailable: {exc}",
+            ) from exc
 
     return Response(
         content=response.content,
