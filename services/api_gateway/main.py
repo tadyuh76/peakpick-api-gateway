@@ -6,8 +6,12 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from shared.auth import AuthPrincipal, principal_from_authorization
+from shared.logging import configure_logging, install_api_logging
+from shared.tenancy import DEFAULT_STORE_ID
 
 SERVICE_ROUTES = {
+    "identity": os.getenv("IDENTITY_SERVICE_URL", "http://localhost:8008"),
     "catalog": os.getenv("CATALOG_SERVICE_URL", "http://localhost:8001"),
     "orders": os.getenv("ORDER_SERVICE_URL", "http://localhost:8002"),
     "slots": os.getenv("SLOT_SERVICE_URL", "http://localhost:8003"),
@@ -16,6 +20,7 @@ SERVICE_ROUTES = {
     "notifications": os.getenv("NOTIFICATION_SERVICE_URL", "http://localhost:8006"),
     "analytics": os.getenv("ANALYTICS_SERVICE_URL", "http://localhost:8007"),
 }
+logger = configure_logging("api-gateway")
 
 app = FastAPI(
     title="PeakPick API Gateway",
@@ -37,6 +42,52 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+install_api_logging(app, logger, "api-gateway")
+
+
+def _required_roles(service: str, path: str, method: str) -> set[str]:
+    if service == "identity":
+        return set()
+    if service == "store" and method != "GET":
+        return {"admin", "store_manager"}
+    if service == "inventory" and method != "GET":
+        return {"admin", "store_manager"}
+    if service in {"notifications", "analytics"}:
+        return {"admin", "store_manager"}
+    if service == "slots" and method != "GET":
+        return {"admin", "store_manager"}
+    return set()
+
+
+def _authorize(request: Request, service: str, path: str) -> AuthPrincipal | None:
+    required_roles = _required_roles(service, path, request.method)
+    if not required_roles:
+        authorization = request.headers.get("authorization")
+        return principal_from_authorization(authorization) if authorization else None
+
+    principal = principal_from_authorization(request.headers.get("authorization"))
+    if principal.role not in required_roles:
+        raise HTTPException(status_code=403, detail="Role is not allowed for this API")
+    return principal
+
+
+def _tenant_headers(request: Request, principal: AuthPrincipal | None) -> dict[str, str]:
+    if not principal:
+        return {}
+
+    if principal.role == "admin":
+        store_id = request.headers.get("x-store-id") or request.query_params.get("store_id") or principal.store_id
+    else:
+        requested_store_id = request.headers.get("x-store-id") or request.query_params.get("store_id")
+        if requested_store_id and requested_store_id != principal.store_id:
+            raise HTTPException(status_code=403, detail="Store manager can only access their own store")
+        store_id = principal.store_id or DEFAULT_STORE_ID
+
+    return {
+        "x-user-id": principal.username,
+        "x-user-role": principal.role,
+        "x-store-id": store_id,
+    }
 
 
 @app.get("/health")
@@ -70,8 +121,10 @@ async def proxy(service: str, path: str, request: Request) -> Response:
     if service not in SERVICE_ROUTES:
         raise HTTPException(status_code=404, detail=f"Unknown service route: {service}")
 
+    principal = _authorize(request, service, path)
     target_url = f"{SERVICE_ROUTES[service].rstrip('/')}/{path}"
     headers = {key: value for key, value in request.headers.items() if key.lower() != "host"}
+    headers.update(_tenant_headers(request, principal))
     body = await request.body()
 
     async with httpx.AsyncClient(timeout=10) as client:
