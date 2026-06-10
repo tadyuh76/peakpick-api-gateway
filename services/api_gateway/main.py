@@ -19,7 +19,6 @@ SERVICE_ROUTES = {
     "inventory": os.getenv("INVENTORY_SERVICE_URL", "http://localhost:8005"),
     "notifications": os.getenv("NOTIFICATION_SERVICE_URL", "http://localhost:8006"),
     "analytics": os.getenv("ANALYTICS_SERVICE_URL", "http://localhost:8007"),
-    "system": os.getenv("ANALYTICS_SERVICE_URL", "http://localhost:8007"),
 }
 logger = configure_logging("api-gateway")
 
@@ -53,7 +52,7 @@ def _required_roles(service: str, path: str, method: str) -> set[str]:
         return {"admin", "store_manager"}
     if service == "inventory" and method != "GET":
         return {"admin", "store_manager"}
-    if service in {"notifications", "analytics", "system"}:
+    if service in {"notifications", "analytics"}:
         return {"admin", "store_manager"}
     if service == "slots" and method != "GET":
         return {"admin", "store_manager"}
