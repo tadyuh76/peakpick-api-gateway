@@ -1,2 +1,1 @@
-"""API Gateway service."""
-
+"""Dịch vụ API Gateway."""
